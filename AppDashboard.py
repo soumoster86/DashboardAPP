@@ -4,9 +4,25 @@ import pandas as pd
 # -----------------------------
 # Page Config
 # -----------------------------
-st.set_page_config(page_title="Windows 11 Upgrade Dashboard", layout="wide")
+st.set_page_config(page_title="Upgrade Dashboard", layout="wide")
 
-st.title("📊 Windows 11 Upgrade Status Dashboard")
+st.title("📊 Upgrade Status Dashboard")
+
+# -----------------------------
+# Highlight Function
+# -----------------------------
+def highlight_status(val):
+    if val == "Not Booked":
+        return "background-color: red; color: white"
+    elif val == "Updated":
+        return "background-color: green; color: white"
+    elif val == "Booked":
+        return "background-color: orange"
+    elif val == "Unreachable":
+        return "background-color: gray; color: white"
+    elif val == "Left Org":
+        return "background-color: black; color: white"
+    return ""
 
 # -----------------------------
 # File Upload
@@ -15,8 +31,12 @@ uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
 if uploaded_file is not None:
 
-    # Read Excel
-    df = pd.read_excel(uploaded_file)
+    # Read Excel safely
+    try:
+        df = pd.read_excel(uploaded_file, engine="openpyxl")
+    except Exception as e:
+        st.error(f"Error reading Excel file: {e}")
+        st.stop()
 
     # Clean column names
     df.columns = df.columns.str.strip()
@@ -27,18 +47,17 @@ if uploaded_file is not None:
         st.stop()
 
     # -----------------------------
-    # Data Cleaning (BULLETPROOF)
+    # Data Cleaning
     # -----------------------------
     df["Status"] = (
         df["Status"]
-        .fillna("Not Booked")        # Handle NaN
-        .astype(str)                # Convert everything to string
-        .str.strip()                # Remove spaces
-        .replace("", "Not Booked")  # Empty → Not Booked
-        .str.title()                # Normalize case
+        .fillna("Not Booked")
+        .astype(str)
+        .str.strip()
+        .replace("", "Not Booked")
+        .str.title()
     )
 
-    # Fix weird values
     df["Status"] = df["Status"].replace({
         "Nan": "Not Booked",
         "None": "Not Booked",
@@ -49,7 +68,6 @@ if uploaded_file is not None:
         "No Response": "Unreachable"
     })
 
-    # Allowed statuses (strict control)
     valid_status = ["Updated", "Booked", "Not Booked", "Left Org", "Unreachable"]
 
     df["Status"] = df["Status"].apply(
@@ -83,6 +101,22 @@ if uploaded_file is not None:
     col5.metric("📵 Unreachable", unreachable)
 
     # -----------------------------
+    # Critical Users
+    # -----------------------------
+    critical_df = df[df["Status"].isin(["Not Booked", "Unreachable"])]
+
+    st.subheader("🚨 Critical Users (Action Required)")
+    styled_critical = critical_df.style.map(highlight_status, subset=["Status"])
+    st.dataframe(styled_critical)
+
+    # -----------------------------
+    # Status Percentage
+    # -----------------------------
+    st.subheader("📊 Status Percentage")
+    percent_df = (status_counts / total_users * 100).round(2)
+    st.write(percent_df)
+
+    # -----------------------------
     # Progress Bar
     # -----------------------------
     if total_users > 0:
@@ -91,13 +125,14 @@ if uploaded_file is not None:
         st.write(f"### 🚀 Upgrade Completion: {completion:.2f}%")
 
     # -----------------------------
-    # Raw Data
+    # Raw Data (Styled)
     # -----------------------------
     st.subheader("📄 Raw Data")
-    st.dataframe(df)
+    styled_df = df.style.map(highlight_status, subset=["Status"])
+    st.dataframe(styled_df)
 
     # -----------------------------
-    # Filter Section (FIXED ERROR)
+    # Filter Section
     # -----------------------------
     st.subheader("🔍 Filter Data")
 
@@ -113,7 +148,8 @@ if uploaded_file is not None:
     else:
         filtered_df = df
 
-    st.dataframe(filtered_df)
+    styled_filtered = filtered_df.style.map(highlight_status, subset=["Status"])
+    st.dataframe(styled_filtered)
 
     # -----------------------------
     # Detailed Counts
@@ -125,7 +161,7 @@ if uploaded_file is not None:
     # Chart
     # -----------------------------
     st.subheader("📊 Visualization")
-    st.bar_chart(status_counts)
+    st.line_chart(status_counts)
 
     # -----------------------------
     # Download Summary
