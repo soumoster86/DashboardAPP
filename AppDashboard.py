@@ -3,14 +3,15 @@ import pandas as pd
 from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
+import matplotlib.pyplot as plt
 
 # -----------------------------
 # CONFIG
 # -----------------------------
 st.set_page_config(page_title="Upgrade Dashboard", layout="wide")
 
-st.title("📊 Upgrade Dashboard")
-st.caption("Track progress • Identify critical users • Notify managers")
+st.title("📊 Windows 11 Upgrade Dashboard")
+st.caption("Actionable insights • Manager accountability • Automated notifications")
 
 # -----------------------------
 # HIGHLIGHT FUNCTION
@@ -26,7 +27,7 @@ def highlight_status(val):
     return colors.get(val, "")
 
 # -----------------------------
-# LOAD DATA (CACHED)
+# LOAD DATA
 # -----------------------------
 @st.cache_data
 def load_data(file):
@@ -39,15 +40,13 @@ def send_email(to_email, subject, html_body):
     try:
         sender_email = st.secrets["email"]
         password = st.secrets["password"]
-        smtp_server = st.secrets.get("smtp_server", "smtp.office365.com")
-        smtp_port = st.secrets.get("smtp_port", 587)
 
         msg = MIMEText(html_body, "html")
         msg["Subject"] = subject
         msg["From"] = sender_email
         msg["To"] = to_email
 
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
+        with smtplib.SMTP("smtp.office365.com", 587) as server:
             server.starttls()
             server.login(sender_email, password)
             server.send_message(msg)
@@ -55,7 +54,7 @@ def send_email(to_email, subject, html_body):
         return True
 
     except Exception as e:
-        st.error(f"❌ Email failed: {e}")
+        st.error(f"Email failed: {e}")
         return False
 
 # -----------------------------
@@ -65,23 +64,16 @@ uploaded_file = st.file_uploader("📂 Upload Excel File", type=["xlsx"])
 
 if uploaded_file:
 
-    try:
-        df = load_data(uploaded_file)
-    except Exception as e:
-        st.error(f"❌ Failed to read Excel: {e}")
-        st.stop()
+    df = load_data(uploaded_file)
+    df.columns = df.columns.str.strip()
 
     # -----------------------------
     # VALIDATION
     # -----------------------------
-    df.columns = df.columns.str.strip()
-
     required_cols = ["Name", "PC name", "Status", "Manager", "Manager Email"]
 
-    missing_cols = [col for col in required_cols if col not in df.columns]
-
-    if missing_cols:
-        st.error(f"⚠️ Missing columns: {', '.join(missing_cols)}")
+    if any(col not in df.columns for col in required_cols):
+        st.error("Missing required columns!")
         st.stop()
 
     # -----------------------------
@@ -102,40 +94,45 @@ if uploaded_file:
     df["Status"] = df["Status"].replace({
         "Nan": "Not Booked",
         "None": "Not Booked",
-        "Notbooked": "Not Booked",
         "Left": "Left Org",
-        "Leftorg": "Left Org",
         "No Response": "Unreachable"
     })
 
     valid_status = ["Updated", "Booked", "Not Booked", "Left Org", "Unreachable"]
-
     df["Status"] = df["Status"].apply(lambda x: x if x in valid_status else "Not Booked")
 
     total_users = len(df)
+    status_counts = df["Status"].value_counts()
 
     # -----------------------------
     # METRICS
     # -----------------------------
-    status_counts = df["Status"].value_counts()
+    st.subheader("📊 Key Metrics")
 
-    st.subheader("📊 Status Summary")
+    col1, col2, col3 = st.columns(3)
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    completion_pct = (status_counts.get("Updated", 0) / total_users) * 100
+    pending_pct = 100 - completion_pct
 
-    col1.metric("✅ Updated", status_counts.get("Updated", 0))
-    col2.metric("📅 Booked", status_counts.get("Booked", 0))
-    col3.metric("❌ Not Booked", status_counts.get("Not Booked", 0))
-    col4.metric("👋 Left Org", status_counts.get("Left Org", 0))
-    col5.metric("📵 Unreachable", status_counts.get("Unreachable", 0))
+    col1.metric("🚀 Completion %", f"{completion_pct:.1f}%")
+    col2.metric("⚠️ Pending %", f"{pending_pct:.1f}%")
+    col3.metric("👥 Total Users", total_users)
 
     # -----------------------------
-    # PROGRESS
+    # STATUS DISTRIBUTION
     # -----------------------------
-    if total_users > 0:
-        completion = (status_counts.get("Updated", 0) / total_users) * 100
-        st.progress(completion / 100)
-        st.write(f"### 🚀 Completion: {completion:.2f}%")
+    st.subheader("📊 Status Distribution")
+    st.bar_chart(status_counts.sort_values(ascending=False))
+
+    # -----------------------------
+    # PIE CHART
+    # -----------------------------
+    st.subheader("🥧 Status Breakdown")
+
+    fig, ax = plt.subplots()
+    ax.pie(status_counts, labels=status_counts.index, autopct='%1.1f%%')
+    ax.axis('equal')
+    st.pyplot(fig)
 
     # -----------------------------
     # CRITICAL USERS
@@ -144,22 +141,32 @@ if uploaded_file:
 
     critical_df = df[df["Status"].isin(["Not Booked", "Unreachable"])]
 
-    styled_critical = critical_df.style.map(highlight_status, subset=["Status"])
-    st.dataframe(styled_critical, use_container_width=True)
+    styled = critical_df.style.map(highlight_status, subset=["Status"])
+    st.dataframe(styled, use_container_width=True)
 
     # -----------------------------
-    # MANAGER SUMMARY
+    # MANAGER INSIGHTS
     # -----------------------------
-    st.subheader("👨‍💼 Manager Breakdown")
+    st.subheader("👨‍💼 Manager-wise Issues")
 
-    manager_summary = (
-        critical_df.groupby(["Manager", "Manager Email"])
-        .size()
-        .reset_index(name="Critical Count")
-        .sort_values(by="Critical Count", ascending=False)
-    )
+    manager_issues = critical_df["Manager"].value_counts()
+    st.bar_chart(manager_issues)
 
-    st.dataframe(manager_summary, use_container_width=True)
+    # -----------------------------
+    # MANAGER VS STATUS
+    # -----------------------------
+    st.subheader("📊 Manager vs Status Matrix")
+
+    manager_status = pd.crosstab(df["Manager"], df["Status"])
+    st.bar_chart(manager_status)
+
+    # -----------------------------
+    # TOP 5 MANAGERS
+    # -----------------------------
+    st.subheader("🔥 Top 5 Managers Requiring Attention")
+
+    top5 = manager_issues.head(5)
+    st.bar_chart(top5)
 
     # -----------------------------
     # FILTERS
@@ -168,11 +175,8 @@ if uploaded_file:
 
     col1, col2 = st.columns(2)
 
-    managers = sorted(df["Manager"].unique())
-    statuses = sorted(df["Status"].unique())
-
-    selected_manager = col1.selectbox("Manager", ["All"] + managers)
-    selected_status = col2.selectbox("Status", ["All"] + statuses)
+    selected_manager = col1.selectbox("Manager", ["All"] + sorted(df["Manager"].unique()))
+    selected_status = col2.selectbox("Status", ["All"] + sorted(df["Status"].unique()))
 
     filtered_df = df.copy()
 
@@ -186,57 +190,33 @@ if uploaded_file:
     st.dataframe(styled_filtered, use_container_width=True)
 
     # -----------------------------
-    # EMAIL PREVIEW
+    # EMAIL SECTION
     # -----------------------------
-    st.subheader("📧 Email Preview")
+    st.subheader("📧 Notify Managers")
 
-    if st.checkbox("Show Email Preview"):
+    if st.button("Send Emails"):
+
+        success = 0
+
         for (manager, email), group in critical_df.groupby(["Manager", "Manager Email"]):
-            st.write(f"### {manager} ({email})")
-            st.dataframe(group[["Name", "PC name", "Status"]])
 
-    # -----------------------------
-    # SEND EMAILS
-    # -----------------------------
-    st.subheader("📨 Send Notifications")
+            if not email:
+                continue
 
-    if st.button("Send Emails to Managers"):
+            html_table = group[["Name", "PC name", "Status"]].to_html(index=False)
 
-        if critical_df.empty:
-            st.info("No critical users. No emails sent.")
-        else:
-            success = 0
+            body = f"""
+            <h3>Hi {manager},</h3>
+            <p>Below users need action:</p>
+            {html_table}
+            <br>
+            <p>Please take necessary action.</p>
+            """
 
-            for (manager, email), group in critical_df.groupby(["Manager", "Manager Email"]):
+            if send_email(email, "Pending Upgrade Users", body):
+                success += 1
 
-                if not email:
-                    st.warning(f"⚠️ Missing email for {manager}")
-                    continue
-
-                html_table = group[["Name", "PC name", "Status"]].to_html(index=False)
-
-                body = f"""
-                <h3>Hi {manager},</h3>
-                <p>The following users require your attention:</p>
-                {html_table}
-                <br>
-                <p>Please take necessary action.</p>
-                <p>Regards,<br>IT Team</p>
-                """
-
-                if send_email(email, "🚨 Pending Windows Upgrade Users", body):
-                    success += 1
-
-            st.success(f"✅ Emails sent to {success} managers")
-
-    # -----------------------------
-    # VISUALIZATION
-    # -----------------------------
-    st.subheader("📊 Visualization")
-    st.bar_chart(status_counts)
-
-    st.subheader("🔥 Top Managers with Issues")
-    st.bar_chart(critical_df["Manager"].value_counts())
+        st.success(f"Emails sent: {success}")
 
     # -----------------------------
     # DOWNLOAD
@@ -245,12 +225,7 @@ if uploaded_file:
 
     csv = status_counts.to_csv().encode("utf-8")
 
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="status_summary.csv",
-        mime="text/csv"
-    )
+    st.download_button("Download CSV", csv, "summary.csv", "text/csv")
 
     # -----------------------------
     # FOOTER
@@ -258,4 +233,4 @@ if uploaded_file:
     st.caption(f"Last refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 else:
-    st.info("👆 Upload Excel file to begin")
+    st.info("Upload Excel file to begin")
